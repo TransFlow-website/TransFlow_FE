@@ -1,0 +1,152 @@
+.translation-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.translation-header {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.translation-header h1 {
+  font-size: 2.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.translation-main {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.language-selector {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.lang-select {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  background-color: white;
+  cursor: pointer;
+  transition: border-color 0.3s ease;
+}
+
+.lang-select:hover {
+  border-color: #667eea;
+}
+
+.lang-select:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.swap-button {
+  padding: 0.75rem 1rem;
+  font-size: 1.5rem;
+  background-color: #f5f5f5;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.3s ease;
+}
+
+.swap-button:hover {
+  background-color: #e0e0e0;
+  transform: rotate(180deg);
+}
+
+.translation-boxes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+
+.text-box {
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 1rem;
+  background-color: white;
+}
+
+.text-input {
+  width: 100%;
+  min-height: 300px;
+  border: none;
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+.text-output {
+  min-height: 300px;
+  font-size: 1rem;
+  white-space: pre-wrap;
+  color: #333;
+}
+
+.text-info {
+  text-align: right;
+  color: #999;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 300px;
+  color: #667eea;
+  font-size: 1.2rem;
+}
+
+.translate-button {
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  margin: 0 auto;
+  padding: 1rem 2rem;
+  font-size: 1.2rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.translate-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+}
+
+.translate-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .translation-boxes {
+    grid-template-columns: 1fr;
+  }
+  
+  .language-selector {
+    flex-direction: column;
+  }
+  
+  .lang-select {
+    width: 100%;
+  }
+}
+
