@@ -8,6 +8,7 @@ import WebPageEditor from './pages/WebPageEditor';
 import './App.css';
 
 import Dashboard from './pages/Dashboard';
+import TranslationGuide from './pages/TranslationGuide';
 const TranslationsPending = () => <div className="p-8"><h1 className="text-2xl font-bold">번역 대기 문서</h1></div>;
 const TranslationsWorking = () => <div className="p-8"><h1 className="text-2xl font-bold">내가 작업 중인 문서</h1></div>;
 const TranslationsFavorites = () => <div className="p-8"><h1 className="text-2xl font-bold">찜한 문서</h1></div>;
@@ -34,6 +35,7 @@ function App() {
               
               {/* 사이드바 메뉴 라우트 */}
               <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/translation-guide" element={<TranslationGuide />} />
               <Route path="/translations/pending" element={<TranslationsPending />} />
               <Route path="/translations/working" element={<TranslationsWorking />} />
               <Route path="/translations/favorites" element={<TranslationsFavorites />} />

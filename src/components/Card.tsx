@@ -13,17 +13,17 @@ export const Card: React.FC<CardProps> = ({ children, priority = 'normal', class
     switch (priority) {
       case 'primary':
         return {
-          background: '#FFFFFF',
+          background: '#DCDCDC', // gainsboro - 예전 버전
           border: '1px solid #A9A9A9',
         };
       case 'secondary':
         return {
-          background: '#DCDCDC',
+          background: '#D3D3D3', // lightgray - 현재 버전 (번역 가이드용)
           border: '1px solid #D3D3D3',
         };
       default: // normal
         return {
-          background: '#FFFFFF',
+          background: '#DCDCDC', // gainsboro - 예전 버전
           border: '1px solid #C0C0C0',
         };
     }

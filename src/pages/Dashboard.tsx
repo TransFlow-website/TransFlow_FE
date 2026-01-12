@@ -10,9 +10,9 @@ import { Document, DashboardData } from '../types/dashboard';
 // 더미 데이터
 const mockDashboardData: DashboardData = {
   pendingDocuments: [
-    { id: 1, title: '웹사이트 이용약관', category: '법률 문서', estimatedVolume: '약 2,000자' },
-    { id: 2, title: '제품 사용 설명서', category: '기술 문서', estimatedVolume: '약 1,500자' },
-    { id: 3, title: '고객 지원 가이드', category: '고객 서비스', estimatedVolume: '약 3,000자' },
+    { id: 1, title: '웹사이트 이용약관', category: '법률 문서', estimatedVolume: '약 2,000자', progress: 0 },
+    { id: 2, title: '제품 사용 설명서', category: '기술 문서', estimatedVolume: '약 1,500자', progress: 50 },
+    { id: 3, title: '고객 지원 가이드', category: '고객 서비스', estimatedVolume: '약 3,000자', progress: 0 },
   ],
   workingDocuments: [
     { id: 4, title: '마케팅 자료 번역', category: '마케팅', lastModified: '2시간 전' },
@@ -23,6 +23,7 @@ const mockDashboardData: DashboardData = {
     id: 6,
     title: '공식 발표문',
     category: '공식 문서',
+    translator: '김봉사',
   },
 };
 
@@ -87,41 +88,55 @@ const Dashboard: React.FC = () => {
                         padding: '12px',
                         border: '1px solid #C0C0C0',
                         borderRadius: '8px',
-                        backgroundColor: '#FFFFFF',
+                        backgroundColor: '#D3D3D3', // lightgray - 예전 버전 (카드 1용)
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
                       }}
                     >
-                      <div
-                        style={{
-                          fontSize: '13px',
-                          color: '#000000',
-                          fontFamily: 'system-ui, Pretendard, sans-serif',
-                          fontWeight: 500,
-                          marginBottom: '4px',
-                        }}
-                      >
-                        {doc.title}
+                      <div style={{ flex: 1 }}>
+                        <div
+                          style={{
+                            fontSize: '13px',
+                            color: '#000000',
+                            fontFamily: 'system-ui, Pretendard, sans-serif',
+                            fontWeight: 500,
+                            marginBottom: '4px',
+                          }}
+                        >
+                          {doc.title}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '12px',
+                            color: '#696969',
+                            fontFamily: 'system-ui, Pretendard, sans-serif',
+                            marginBottom: '2px',
+                          }}
+                        >
+                          {doc.category}
+                        </div>
                       </div>
                       <div
                         style={{
                           fontSize: '12px',
                           color: '#696969',
                           fontFamily: 'system-ui, Pretendard, sans-serif',
-                          marginBottom: '2px',
+                          marginLeft: '12px',
+                          flexShrink: 0,
+                          textAlign: 'right',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '2px',
                         }}
                       >
-                        {doc.category}
-                      </div>
-                      {doc.estimatedVolume && (
-                        <div
-                          style={{
-                            fontSize: '12px',
-                            color: '#696969',
-                            fontFamily: 'system-ui, Pretendard, sans-serif',
-                          }}
-                        >
-                          {doc.estimatedVolume}
+                        {doc.estimatedVolume && (
+                          <div>{doc.estimatedVolume}</div>
+                        )}
+                        <div>
+                          {doc.progress !== undefined ? `${doc.progress}%` : '0%'} 완료
                         </div>
-                      )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -143,7 +158,7 @@ const Dashboard: React.FC = () => {
                 onClick={() => navigate('/translations/pending')}
                 className="w-full"
               >
-                번역 시작하기
+                번역하러 가기
               </Button>
             </div>
           </Card>
@@ -185,29 +200,33 @@ const Dashboard: React.FC = () => {
                         padding: '12px',
                         border: '1px solid #C0C0C0',
                         borderRadius: '8px',
-                        backgroundColor: '#FFFFFF',
+                        backgroundColor: '#D3D3D3', // lightgray - 예전 버전 (카드 2용)
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
                       }}
                     >
-                      <div
-                        style={{
-                          fontSize: '13px',
-                          color: '#000000',
-                          fontFamily: 'system-ui, Pretendard, sans-serif',
-                          fontWeight: 500,
-                          marginBottom: '4px',
-                        }}
-                      >
-                        {doc.title}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '12px',
-                          color: '#696969',
-                          fontFamily: 'system-ui, Pretendard, sans-serif',
-                          marginBottom: '2px',
-                        }}
-                      >
-                        {doc.category}
+                      <div style={{ flex: 1 }}>
+                        <div
+                          style={{
+                            fontSize: '13px',
+                            color: '#000000',
+                            fontFamily: 'system-ui, Pretendard, sans-serif',
+                            fontWeight: 500,
+                            marginBottom: '4px',
+                          }}
+                        >
+                          {doc.title}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '12px',
+                            color: '#696969',
+                            fontFamily: 'system-ui, Pretendard, sans-serif',
+                          }}
+                        >
+                          {doc.category}
+                        </div>
                       </div>
                       {doc.lastModified && (
                         <div
@@ -215,6 +234,9 @@ const Dashboard: React.FC = () => {
                             fontSize: '12px',
                             color: '#696969',
                             fontFamily: 'system-ui, Pretendard, sans-serif',
+                            marginLeft: '12px',
+                            flexShrink: 0,
+                            textAlign: 'right',
                           }}
                         >
                           {doc.lastModified}
@@ -271,29 +293,48 @@ const Dashboard: React.FC = () => {
                       padding: '12px',
                       border: '1px solid #C0C0C0',
                       borderRadius: '8px',
-                      backgroundColor: '#FFFFFF',
+                      backgroundColor: '#D3D3D3', // lightgray - 예전 버전
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
                     }}
                   >
-                    <div
-                      style={{
-                        fontSize: '13px',
-                        color: '#000000',
-                        fontFamily: 'system-ui, Pretendard, sans-serif',
-                        fontWeight: 500,
-                        marginBottom: '4px',
-                      }}
-                    >
-                      {data.latestReviewDocument.title}
+                    <div style={{ flex: 1 }}>
+                      <div
+                        style={{
+                          fontSize: '13px',
+                          color: '#000000',
+                          fontFamily: 'system-ui, Pretendard, sans-serif',
+                          fontWeight: 500,
+                          marginBottom: '4px',
+                        }}
+                      >
+                        {data.latestReviewDocument.title}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          color: '#696969',
+                          fontFamily: 'system-ui, Pretendard, sans-serif',
+                        }}
+                      >
+                        {data.latestReviewDocument.category}
+                      </div>
                     </div>
-                    <div
-                      style={{
-                        fontSize: '12px',
-                        color: '#696969',
-                        fontFamily: 'system-ui, Pretendard, sans-serif',
-                      }}
-                    >
-                      {data.latestReviewDocument.category}
-                    </div>
+                    {data.latestReviewDocument.translator && (
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          color: '#696969',
+                          fontFamily: 'system-ui, Pretendard, sans-serif',
+                          marginLeft: '12px',
+                          flexShrink: 0,
+                          textAlign: 'right',
+                        }}
+                      >
+                        {data.latestReviewDocument.translator}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div
@@ -345,13 +386,22 @@ const Dashboard: React.FC = () => {
                 </p>
               </div>
 
-              <Button
-                variant="secondary"
-                onClick={() => navigate('/glossary')}
-                className="w-full"
-              >
-                용어집 열기
-              </Button>
+              <div className="space-y-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => navigate('/translation-guide')}
+                  className="w-full"
+                >
+                  번역 가이드
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => navigate('/glossary')}
+                  className="w-full"
+                >
+                  용어집 열기
+                </Button>
+              </div>
             </div>
           </Card>
         </div>
