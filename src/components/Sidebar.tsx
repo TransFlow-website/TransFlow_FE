@@ -398,7 +398,7 @@ export const Sidebar: React.FC = () => {
             </div>
           )}
           {isCollapsed && !isMobileOpen && (
-            <div className="w-full flex justify-center">
+            <div className="w-full flex flex-col items-center gap-2">
               <div
                 className="w-8 h-8 rounded-full flex items-center justify-center text-white font-semibold"
                 style={{
@@ -408,6 +408,18 @@ export const Sidebar: React.FC = () => {
               >
                 L
               </div>
+              <button
+                onClick={toggleCollapse}
+                className="p-1 rounded-lg hover:bg-[rgba(217,234,253,0.6)] transition-colors"
+                style={{
+                  color: colors.primaryText,
+                  backgroundColor: 'transparent',
+                  transitionDuration: transitions.duration,
+                }}
+                aria-label="Expand sidebar"
+              >
+                <Menu size={14} strokeWidth={1.75} />
+              </button>
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -421,20 +433,6 @@ export const Sidebar: React.FC = () => {
                   transitionDuration: transitions.duration,
                 }}
                 aria-label="Toggle sidebar"
-              >
-                <Menu size={16} strokeWidth={1.75} />
-              </button>
-            )}
-            {isCollapsed && !isMobileOpen && (
-              <button
-                onClick={toggleCollapse}
-                className="absolute top-4 right-2 p-2 rounded-lg hover:bg-[rgba(217,234,253,0.6)] transition-colors"
-                style={{
-                  color: colors.primaryText,
-                  backgroundColor: 'transparent',
-                  transitionDuration: transitions.duration,
-                }}
-                aria-label="Expand sidebar"
               >
                 <Menu size={16} strokeWidth={1.75} />
               </button>
