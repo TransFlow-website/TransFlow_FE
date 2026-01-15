@@ -20,6 +20,8 @@ export interface DocumentListItem {
   assignedManager?: string; // 담당 관리자
   isFinal: boolean; // Final 여부
   originalUrl?: string;
+  currentWorker?: string; // 현재 작업자 (IN_TRANSLATION 상태인 경우)
+  currentVersionId?: number; // 현재 버전 ID
 }
 
 export interface DocumentFilter {
