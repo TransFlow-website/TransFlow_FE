@@ -6,15 +6,111 @@ import { DocumentListItem, Priority, DocumentFilter, DocumentSortOption } from '
 import { DocumentState } from '../types/translation';
 import { colors } from '../constants/designTokens';
 import { Button } from '../components/Button';
-import { documentApi, DocumentResponse } from '../services/documentApi';
+import { documentApi, DocumentResponse, DocumentVersionResponse } from '../services/documentApi';
+import { categoryApi, CategoryResponse } from '../services/categoryApi';
+import { LockStatusResponse } from '../services/translationWorkApi';
 
-const categories = ['전체', '웹사이트', '마케팅', '고객지원', '기술문서'];
 const priorities = ['전체', '높음', '보통', '낮음'];
 
+/**
+ * HTML에서 문단 수를 계산하는 함수
+ * data-paragraph-index 속성이 있으면 그것을 사용하고, 없으면 문단 요소를 직접 찾아서 계산
+ */
+function countParagraphs(html: string): number {
+  if (!html || html.trim().length === 0) {
+    return 0;
+  }
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const body = doc.body;
+
+    // data-paragraph-index 속성이 있는 요소들 찾기
+    const indexedParagraphs = body.querySelectorAll('[data-paragraph-index]');
+    if (indexedParagraphs.length > 0) {
+      // 인덱스가 있으면 최대 인덱스 + 1이 문단 수
+      let maxIndex = -1;
+      indexedParagraphs.forEach((el) => {
+        const indexStr = (el as HTMLElement).getAttribute('data-paragraph-index');
+        if (indexStr) {
+          const index = parseInt(indexStr, 10);
+          if (!isNaN(index) && index > maxIndex) {
+            maxIndex = index;
+          }
+        }
+      });
+      return maxIndex + 1;
+    }
+
+    // 인덱스가 없으면 문단 요소를 직접 찾아서 계산
+    const paragraphSelectors = 'p, h1, h2, h3, h4, h5, h6, div, li, blockquote, article, section, figure, figcaption';
+    const elements = body.querySelectorAll(paragraphSelectors);
+    let count = 0;
+    elements.forEach((el) => {
+      const text = el.textContent?.trim();
+      const hasImages = el.querySelectorAll('img').length > 0;
+      if ((text && text.length > 0) || hasImages) {
+        count++;
+      }
+    });
+    return count;
+  } catch (error) {
+    console.error('문단 수 계산 실패:', error);
+    return 0;
+  }
+}
+
+/**
+ * 진행률 계산 함수
+ * @param completedParagraphs 완료된 문단 인덱스 배열
+ * @param totalParagraphs 전체 문단 수
+ * @returns 진행률 (0-100)
+ */
+function calculateProgress(completedParagraphs: number[] | undefined, totalParagraphs: number): number {
+  if (!completedParagraphs || completedParagraphs.length === 0) {
+    return 0;
+  }
+  if (totalParagraphs === 0) {
+    return 0;
+  }
+  return Math.round((completedParagraphs.length / totalParagraphs) * 100);
+}
+
 // DocumentResponse를 DocumentListItem으로 변환
-const convertToDocumentListItem = (doc: DocumentResponse): DocumentListItem => {
-  // 진행률 계산 (임시로 0%, 나중에 버전 정보에서 계산)
-  const progress = 0;
+const convertToDocumentListItem = (
+  doc: DocumentResponse & { lockInfo?: LockStatusResponse | null; originalVersion?: DocumentVersionResponse | null },
+  categoryMap?: Map<number, string>
+): DocumentListItem => {
+  // 진행률 계산
+  let progress = 0;
+  
+  if (doc.status === 'APPROVED') {
+    progress = 100; // 완료된 문서는 100%
+  } else if (doc.status === 'IN_TRANSLATION') {
+    // IN_TRANSLATION 상태인 경우 진행률 계산
+    if (doc.originalVersion?.content) {
+      const totalParagraphs = countParagraphs(doc.originalVersion.content);
+      if (totalParagraphs > 0) {
+        // completedParagraphs가 있으면 사용, 없으면 0%
+        const completedCount = doc.lockInfo?.completedParagraphs?.length || 0;
+        progress = Math.round((completedCount / totalParagraphs) * 100);
+        console.log(`📊 문서 ${doc.id} 진행률 계산:`, {
+          status: doc.status,
+          totalParagraphs,
+          completedCount,
+          progress,
+          hasLockInfo: !!doc.lockInfo,
+          hasCompletedParagraphs: !!doc.lockInfo?.completedParagraphs,
+        });
+      } else {
+        console.warn(`⚠️ 문서 ${doc.id}: 문단 수가 0입니다.`);
+      }
+    } else {
+      console.warn(`⚠️ 문서 ${doc.id}: ORIGINAL 버전을 찾을 수 없습니다.`);
+    }
+  }
+  // PENDING_TRANSLATION 상태는 기본값 0% 유지
   
   // 마감일 계산 (임시로 createdAt 기준으로 계산, 나중에 deadline 필드 추가 필요)
   const createdAt = new Date(doc.createdAt);
@@ -25,8 +121,10 @@ const convertToDocumentListItem = (doc: DocumentResponse): DocumentListItem => {
   // 우선순위 (임시로 기본값, 나중에 priority 필드 추가 필요)
   const priority = Priority.MEDIUM;
   
-  // 카테고리 이름 (임시로 ID 사용, 나중에 카테고리 API로 이름 가져오기)
-  const category = doc.categoryId ? `카테고리 ${doc.categoryId}` : '미분류';
+  // 카테고리 이름 (카테고리 맵에서 조회)
+  const category = doc.categoryId && categoryMap
+    ? (categoryMap.get(doc.categoryId) || `카테고리 ${doc.categoryId}`)
+    : (doc.categoryId ? `카테고리 ${doc.categoryId}` : '미분류');
 
   return {
     id: doc.id,
@@ -74,6 +172,27 @@ export default function TranslationsPending() {
     field: 'deadline',
     order: 'asc',
   });
+  const [categoryMap, setCategoryMap] = useState<Map<number, string>>(new Map());
+  const [categories, setCategories] = useState<string[]>(['전체']);
+
+  // 카테고리 목록 로드
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        const categoryList = await categoryApi.getAllCategories();
+        const map = new Map<number, string>();
+        categoryList.forEach(cat => {
+          map.set(cat.id, cat.name);
+        });
+        setCategoryMap(map);
+        setCategories(['전체', ...categoryList.map(cat => cat.name)]);
+        console.log('✅ 카테고리 목록 로드 완료:', categoryList.length, '개');
+      } catch (error) {
+        console.error('카테고리 목록 로드 실패:', error);
+      }
+    };
+    loadCategories();
+  }, []);
 
   // API에서 문서 목록 가져오기
   useEffect(() => {
@@ -93,13 +212,69 @@ export default function TranslationsPending() {
           기타: response.filter((d) => !['PENDING_TRANSLATION', 'IN_TRANSLATION'].includes(d.status)).length,
         });
         
-        // PENDING_TRANSLATION 상태만 필터링
+        // PENDING_TRANSLATION, IN_TRANSLATION, APPROVED 상태 모두 포함
         const pendingDocs = response.filter(
-          (doc) => doc.status === 'PENDING_TRANSLATION'
+          (doc) => doc.status === 'PENDING_TRANSLATION' || doc.status === 'IN_TRANSLATION' || doc.status === 'APPROVED'
         );
-        console.log('📌 번역 대기 문서:', pendingDocs.length, '개');
+        console.log('📌 번역 대기/진행 중/완료 문서:', pendingDocs.length, '개');
         
-        const converted = pendingDocs.map(convertToDocumentListItem);
+        // 각 문서에 락 정보 및 ORIGINAL 버전 추가
+        const docsWithLockInfo = await Promise.all(
+          pendingDocs.map(async (doc) => {
+            let lockInfo = null;
+            let originalVersion = null;
+
+            // IN_TRANSLATION 상태인 경우 락 정보 가져오기
+            if (doc.status === 'IN_TRANSLATION') {
+              try {
+                const { translationWorkApi } = await import('../services/translationWorkApi');
+                lockInfo = await translationWorkApi.getLockStatus(doc.id);
+                console.log(`🔒 문서 ${doc.id} 락 정보:`, {
+                  locked: lockInfo?.locked,
+                  hasCompletedParagraphs: !!lockInfo?.completedParagraphs,
+                  completedCount: lockInfo?.completedParagraphs?.length || 0,
+                });
+              } catch (error) {
+                console.warn(`문서 ${doc.id}의 락 정보를 가져올 수 없습니다:`, error);
+              }
+            }
+
+            // 진행률 계산을 위해 ORIGINAL 버전 가져오기
+            try {
+              const versions = await documentApi.getDocumentVersions(doc.id);
+              originalVersion = versions.find(v => v.versionType === 'ORIGINAL') || null;
+              if (originalVersion) {
+                console.log(`📄 문서 ${doc.id} ORIGINAL 버전:`, {
+                  versionId: originalVersion.id,
+                  hasContent: !!originalVersion.content,
+                  contentLength: originalVersion.content?.length || 0,
+                });
+              } else {
+                console.warn(`⚠️ 문서 ${doc.id}: ORIGINAL 버전을 찾을 수 없습니다. 버전 목록:`, versions.map(v => v.versionType));
+              }
+            } catch (error) {
+              console.warn(`문서 ${doc.id}의 버전 정보를 가져올 수 없습니다:`, error);
+            }
+
+            return {
+              ...doc,
+              lockInfo,
+              originalVersion,
+            };
+          })
+        );
+        
+        const converted = docsWithLockInfo.map((doc) => {
+          const item = convertToDocumentListItem(doc, categoryMap);
+          // 락 정보 및 버전 정보 추가
+          if (doc.lockInfo && doc.lockInfo.lockedBy) {
+            item.currentWorker = doc.lockInfo.lockedBy.name;
+          }
+          if (doc.currentVersionId) {
+            item.currentVersionId = doc.currentVersionId;
+          }
+          return item;
+        });
         setDocuments(converted);
         
         if (converted.length === 0 && response.length > 0) {
@@ -121,7 +296,7 @@ export default function TranslationsPending() {
     };
 
     fetchDocuments();
-  }, []);
+  }, [categoryMap]);
 
   // 필터링 및 정렬
   const filteredAndSortedDocuments = useMemo(() => {
@@ -159,90 +334,152 @@ export default function TranslationsPending() {
   }, [documents, selectedCategory, selectedPriority, sortOption]);
 
   const handleStartTranslation = (doc: DocumentListItem) => {
+    // IN_TRANSLATION 상태이고 현재 작업자가 아닌 경우 경고
+    if (doc.status === 'IN_TRANSLATION' && doc.currentWorker) {
+      alert(`이 문서는 현재 ${doc.currentWorker}님이 작업 중입니다.`);
+      return;
+    }
     // 번역 작업 화면으로 이동
     navigate(`/translations/${doc.id}/work`);
+  };
+
+  // 상태 텍스트 변환
+  const getStatusText = (status: DocumentState) => {
+    const statusMap: Record<DocumentState, string> = {
+      'DRAFT': '초안',
+      'PENDING_TRANSLATION': '번역 대기',
+      'IN_TRANSLATION': '번역 중',
+      'PENDING_REVIEW': '검토 대기',
+      'APPROVED': '번역 완료',
+      'PUBLISHED': '공개됨',
+    };
+    return statusMap[status] || status;
   };
 
   const columns: TableColumn<DocumentListItem>[] = [
     {
       key: 'title',
       label: '문서 제목',
-      width: '30%',
+      width: '25%',
       render: (item) => (
         <span style={{ fontWeight: 500, color: '#000000' }}>{item.title}</span>
       ),
     },
     {
+      key: 'status',
+      label: '상태',
+      width: '10%',
+      render: (item) => {
+        let statusColor = colors.primaryText;
+        let statusWeight = 400;
+        
+        if (item.status === 'IN_TRANSLATION') {
+          statusColor = '#FF6B00'; // 주황색
+          statusWeight = 600;
+        } else if (item.status === 'APPROVED') {
+          statusColor = '#28A745'; // 초록색
+          statusWeight = 600;
+        }
+        
+        return (
+          <span style={{ 
+            color: statusColor, 
+            fontSize: '12px',
+            fontWeight: statusWeight,
+          }}>
+            {getStatusText(item.status)}
+          </span>
+        );
+      },
+    },
+    {
       key: 'category',
       label: '카테고리',
-      width: '10%',
+      width: '8%',
       render: (item) => (
         <span style={{ color: colors.primaryText, fontSize: '12px' }}>{item.category}</span>
       ),
     },
     {
-      key: 'estimatedLength',
-      label: '예상 분량',
+      key: 'lastModified',
+      label: '최근 수정',
+      width: '10%',
+      align: 'right',
+      render: (item) => (
+        <span style={{ color: colors.primaryText, fontSize: '12px' }}>
+          {item.lastModified || '-'}
+        </span>
+      ),
+    },
+    {
+      key: 'currentWorker',
+      label: '작업자',
       width: '10%',
       render: (item) => (
-        <span style={{ color: colors.primaryText }}>
-          {item.estimatedLength ? `${item.estimatedLength}자` : '-'}
+        <span style={{ 
+          color: item.status === 'IN_TRANSLATION' ? '#FF6B00' : colors.primaryText, 
+          fontSize: '12px',
+          fontWeight: item.status === 'IN_TRANSLATION' ? 500 : 400,
+        }}>
+          {item.currentWorker || '-'}
+        </span>
+      ),
+    },
+    {
+      key: 'currentVersion',
+      label: '현재 버전',
+      width: '8%',
+      align: 'right',
+      render: (item) => (
+        <span style={{ color: colors.primaryText, fontSize: '12px' }}>
+          {item.currentVersionId ? `v${item.currentVersionId}` : '-'}
         </span>
       ),
     },
     {
       key: 'progress',
       label: '작업 진행률',
-      width: '15%',
+      width: '12%',
       render: (item) => <ProgressBar progress={item.progress} />,
-    },
-    {
-      key: 'deadline',
-      label: '마감일',
-      width: '10%',
-      align: 'right',
-      render: (item) => (
-        <span style={{ color: colors.primaryText, fontSize: '12px' }}>
-          {item.deadline || '-'}
-        </span>
-      ),
-    },
-    {
-      key: 'priority',
-      label: '우선순위',
-      width: '10%',
-      render: (item) => {
-        const priorityLabels: Record<Priority, string> = {
-          [Priority.HIGH]: '높음',
-          [Priority.MEDIUM]: '보통',
-          [Priority.LOW]: '낮음',
-        };
-        return (
-          <span style={{ color: colors.primaryText, fontSize: '12px' }}>
-            {priorityLabels[item.priority]}
-          </span>
-        );
-      },
     },
     {
       key: 'action',
       label: '액션',
-      width: '15%',
+      width: '17%',
       align: 'right',
-      render: (item) => (
-        <Button
-          variant={item.progress === 0 ? 'primary' : 'secondary'}
-          onClick={(e) => {
-            if (e) {
-              e.stopPropagation();
-            }
-            handleStartTranslation(item);
-          }}
-          style={{ fontSize: '12px', padding: '6px 12px' }}
-        >
-          {item.progress === 0 ? '번역 시작' : '이어하기'}
-        </Button>
-      ),
+      render: (item) => {
+        const isInTranslation = item.status === 'IN_TRANSLATION';
+        const isApproved = item.status === 'APPROVED';
+        const isDisabled = isInTranslation || isApproved;
+        
+        return (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'flex-end' }}>
+            <Button
+              variant={isDisabled ? 'disabled' : (item.progress === 0 ? 'primary' : 'secondary')}
+              onClick={(e) => {
+                if (e) {
+                  e.stopPropagation();
+                }
+                if (!isDisabled) {
+                  handleStartTranslation(item);
+                }
+              }}
+              style={{ 
+                fontSize: '12px', 
+                padding: '6px 12px',
+                ...(isApproved ? {
+                  background: '#28A745',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  cursor: 'default',
+                } : {})
+              }}
+            >
+              {isApproved ? '완료' : (item.progress === 0 ? '번역 시작' : '이어하기')}
+            </Button>
+          </div>
+        );
+      },
     },
   ];
 
@@ -270,6 +507,16 @@ export default function TranslationsPending() {
         >
           번역 대기 문서
         </h1>
+        <div style={{ 
+          fontSize: '13px', 
+          color: colors.secondaryText, 
+          marginBottom: '16px',
+          padding: '12px',
+          backgroundColor: '#F8F9FA',
+          borderRadius: '4px',
+        }}>
+          번역 대기 및 번역 중인 문서를 확인할 수 있습니다. 번역 중인 문서는 다른 봉사자가 작업 중이므로 접근할 수 없습니다.
+        </div>
 
         {/* 필터/정렬 바 */}
         <div

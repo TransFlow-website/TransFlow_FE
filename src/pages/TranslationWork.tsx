@@ -36,6 +36,7 @@ export default function TranslationWork() {
   // 패널 접기/전체화면 상태
   const [collapsedPanels, setCollapsedPanels] = useState<Set<string>>(new Set());
   const [fullscreenPanel, setFullscreenPanel] = useState<string | null>(null);
+  const [allPanelsCollapsed, setAllPanelsCollapsed] = useState(false);
 
   // 패널 refs (iframe으로 변경)
   const originalIframeRef = useRef<HTMLIFrameElement>(null);
@@ -58,6 +59,9 @@ export default function TranslationWork() {
   const undoStackRef = useRef<string[]>([]);
   const redoStackRef = useRef<string[]>([]);
   const currentEditorHtmlRef = useRef<string>('');
+  
+  // iframe 렌더링 상태 추적
+  const hasRenderedMyTranslation = useRef(false);
 
   // 마우스 호버로 문단 하이라이트 (useEffect보다 먼저 선언)
   const handleParagraphHover = useCallback((index: number) => {
@@ -125,6 +129,12 @@ export default function TranslationWork() {
             console.log('✅ 락 획득 성공:', lock);
             setLockStatus(lock);
             
+            // completedParagraphs 초기화
+            if (lock.completedParagraphs && lock.completedParagraphs.length > 0) {
+              console.log('📊 기존 완료된 문단 로드:', lock.completedParagraphs);
+              setCompletedParagraphs(new Set(lock.completedParagraphs));
+            }
+            
             if (!lock.canEdit) {
               setError(`이 문서는 ${lock.lockedBy?.name}님이 작업 중입니다.`);
               setLoading(false);
@@ -174,6 +184,13 @@ export default function TranslationWork() {
             try {
               const status = await translationWorkApi.getLockStatus(documentId);
               setLockStatus(status);
+              
+              // completedParagraphs 초기화
+              if (status.completedParagraphs && status.completedParagraphs.length > 0) {
+                console.log('📊 기존 완료된 문단 로드 (409):', status.completedParagraphs);
+                setCompletedParagraphs(new Set(status.completedParagraphs));
+              }
+              
               if (!status.canEdit) {
                 setError(`이 문서는 ${status.lockedBy?.name || '다른 사용자'}님이 작업 중입니다.`);
                 setLoading(false);
@@ -1007,6 +1024,30 @@ export default function TranslationWork() {
     );
   }
 
+  const toggleAllPanels = () => {
+    if (allPanelsCollapsed) {
+      // 모든 패널 펼치기
+      setCollapsedPanels(new Set());
+    } else {
+      // 모든 패널 접기
+      setCollapsedPanels(new Set(['original', 'aiDraft', 'myTranslation']));
+    }
+    setAllPanelsCollapsed(!allPanelsCollapsed);
+  };
+
+  // 상태 텍스트 변환
+  const getStatusText = (status: string) => {
+    const statusMap: Record<string, string> = {
+      'DRAFT': '초안',
+      'PENDING_TRANSLATION': '번역 대기',
+      'IN_TRANSLATION': '번역 중',
+      'PENDING_REVIEW': '검토 대기',
+      'APPROVED': '승인됨',
+      'PUBLISHED': '공개됨',
+    };
+    return statusMap[status] || status;
+  };
+
   return (
     <div
       style={{
@@ -1025,9 +1066,11 @@ export default function TranslationWork() {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
+          gap: '16px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* 왼쪽: 뒤로가기 + 문서 정보 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: 1 }}>
           <Button 
             variant="secondary" 
             onClick={() => {
@@ -1045,25 +1088,109 @@ export default function TranslationWork() {
           >
             ← 뒤로가기
           </Button>
-          {lockStatus?.locked && lockStatus.canEdit && (
-            <div
-              style={{
-                padding: '4px 12px',
-                backgroundColor: '#C0C0C0',
-                color: '#000000',
-                borderRadius: '4px',
-                fontSize: '12px',
-                fontWeight: 500,
-              }}
-            >
-              🔒 현재 당신이 이 문서를 번역 중입니다
+          
+          {document && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#000000' }}>
+                {document.title}
+              </div>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', color: colors.secondaryText }}>
+                  {document.categoryId ? `카테고리 ${document.categoryId}` : '미분류'} · {getStatusText(document.status)}
+                </span>
+                {lockStatus?.lockedBy && (
+                  <span style={{ fontSize: '11px', color: colors.secondaryText }}>
+                    작업자: {lockStatus.lockedBy.name}
+                  </span>
+                )}
+              </div>
             </div>
           )}
-          <div style={{ fontSize: '13px', color: colors.primaryText }}>
-            진행률: {progress.completed}/{progress.total} 문단 완료 (
-            {progress.total > 0 ? Math.round((progress.completed / progress.total) * 100) : 0}%)
+        </div>
+        
+        {/* 중앙: 문서 보기 옵션 (체크박스로 각 버전 표시/숨김) */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '24px',
+          padding: '6px 16px',
+          backgroundColor: '#F8F9FA',
+          borderRadius: '6px',
+          border: '1px solid #D3D3D3',
+        }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: colors.primaryText }}>문서 보기:</span>
+          <label style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '8px', 
+            fontSize: '13px', 
+            cursor: 'pointer',
+            fontWeight: 500,
+          }}>
+            <input
+              type="checkbox"
+              checked={!collapsedPanels.has('original')}
+              onChange={() => togglePanel('original')}
+              style={{ 
+                cursor: 'pointer',
+                width: '16px',
+                height: '16px',
+              }}
+            />
+            <span>원문 (Version 0)</span>
+          </label>
+          <label style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '8px', 
+            fontSize: '13px', 
+            cursor: 'pointer',
+            fontWeight: 500,
+          }}>
+            <input
+              type="checkbox"
+              checked={!collapsedPanels.has('aiDraft')}
+              onChange={() => togglePanel('aiDraft')}
+              style={{ 
+                cursor: 'pointer',
+                width: '16px',
+                height: '16px',
+              }}
+            />
+            <span>AI 초벌 번역 (Version 1)</span>
+          </label>
+          <label style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '8px', 
+            fontSize: '13px', 
+            cursor: 'pointer',
+            fontWeight: 500,
+          }}>
+            <input
+              type="checkbox"
+              checked={!collapsedPanels.has('myTranslation')}
+              onChange={() => togglePanel('myTranslation')}
+              style={{ 
+                cursor: 'pointer',
+                width: '16px',
+                height: '16px',
+              }}
+            />
+            <span>내 번역 (작업 중)</span>
+          </label>
+          <div style={{ 
+            fontSize: '11px', 
+            color: colors.secondaryText, 
+            marginLeft: '8px',
+            paddingLeft: '16px',
+            borderLeft: '1px solid #D3D3D3',
+          }}>
+            진행률: {progress.completed}/{progress.total} ({progress.total > 0 ? Math.round((progress.completed / progress.total) * 100) : 0}%)
           </div>
         </div>
+
+        {/* 오른쪽: 저장/완료 버튼 */}
         <div style={{ display: 'flex', gap: '8px' }}>
           <Button 
             variant="secondary" 
@@ -1074,14 +1201,32 @@ export default function TranslationWork() {
               }
               
               try {
+                // iframe에서 최신 HTML 가져오기
+                const iframe = myTranslationIframeRef.current;
+                let contentToSave = savedTranslationHtml;
+                
+                if (iframe) {
+                  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                  if (iframeDoc && iframeDoc.documentElement) {
+                    contentToSave = iframeDoc.documentElement.outerHTML;
+                    console.log('💾 iframe에서 최신 HTML 추출:', contentToSave.substring(0, 100) + '...');
+                  }
+                }
+                
+                // 서버에 저장
                 await translationWorkApi.saveTranslation(
                   documentId,
                   {
-                    content: savedTranslationHtml,
+                    content: contentToSave,
                     completedParagraphs: Array.from(completedParagraphs)
                   }
                 );
-                setLastSavedHtml(savedTranslationHtml); // 저장 후 lastSavedHtml 업데이트
+                
+                // 저장 후 상태 업데이트
+                setSavedTranslationHtml(contentToSave);
+                setLastSavedHtml(contentToSave);
+                currentEditorHtmlRef.current = contentToSave;
+                
                 alert('✅ 저장되었습니다.');
               } catch (error) {
                 console.error('저장 실패:', error);
@@ -1120,78 +1265,49 @@ export default function TranslationWork() {
             <div
               key={panel.id}
               style={{
-                flex: isCollapsed ? '0 0 48px' : isFullscreen ? '1' : `1 1 ${100 / visiblePanels.length}%`,
-                display: 'flex',
+                flex: isCollapsed ? '0 0 0' : isFullscreen ? '1' : `1 1 ${100 / visiblePanels.length}%`,
+                display: isCollapsed ? 'none' : 'flex',
                 flexDirection: 'column',
                 transition: 'flex 0.2s ease',
-                minWidth: isCollapsed ? '48px' : '200px',
+                minWidth: isCollapsed ? '0' : '200px',
               }}
             >
               {/* 패널 헤더 */}
               <div
                 style={{
                   display: 'flex',
-                  justifyContent: isCollapsed ? 'center' : 'space-between',
+                  justifyContent: 'space-between',
                   alignItems: 'center',
-                  padding: isCollapsed ? '12px 4px' : '8px 12px',
+                  padding: '8px 12px',
                   backgroundColor: '#D3D3D3',
                   borderRadius: '4px 4px 0 0',
-                  cursor: isCollapsed ? 'pointer' : 'default',
-                  height: isCollapsed ? 'auto' : '36px',
-                  writingMode: isCollapsed ? 'vertical-rl' : 'horizontal-tb',
-                  textOrientation: isCollapsed ? 'mixed' : 'mixed',
+                  cursor: 'default',
+                  height: '36px',
                 }}
-                onClick={isCollapsed ? () => togglePanel(panel.id) : undefined}
               >
-                {isCollapsed ? (
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#000000', whiteSpace: 'nowrap' }}>
-                    {panel.title}
-                  </span>
-                ) : (
-                  <>
-                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#000000' }}>
-                      {panel.title}
-                    </span>
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button
-                        onClick={() => toggleFullscreen(panel.id)}
-                        style={{
-                          padding: '4px 8px',
-                          fontSize: '11px',
-                          border: '1px solid #A9A9A9',
-                          borderRadius: '3px',
-                          backgroundColor: '#FFFFFF',
-                          color: '#000000',
-                          cursor: 'pointer',
-                          fontWeight: 500,
-                        }}
-                        title="전체화면"
-                      >
-                        {isFullscreen ? '축소' : '전체'}
-                      </button>
-                      <button
-                        onClick={() => togglePanel(panel.id)}
-                        style={{
-                          padding: '4px 8px',
-                          fontSize: '11px',
-                          border: '1px solid #A9A9A9',
-                          borderRadius: '3px',
-                          backgroundColor: '#FFFFFF',
-                          color: '#000000',
-                          cursor: 'pointer',
-                          fontWeight: 500,
-                        }}
-                        title="접기"
-                      >
-                        접기
-                      </button>
-                    </div>
-                  </>
-                )}
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#000000' }}>
+                  {panel.title}
+                </span>
+                <button
+                  onClick={() => toggleFullscreen(panel.id)}
+                  style={{
+                    padding: '4px 8px',
+                    fontSize: '11px',
+                    border: '1px solid #A9A9A9',
+                    borderRadius: '3px',
+                    backgroundColor: '#FFFFFF',
+                    color: '#000000',
+                    cursor: 'pointer',
+                    fontWeight: 500,
+                  }}
+                  title={isFullscreen ? '확대 해제' : '전체화면 확대'}
+                >
+                  {isFullscreen ? '축소' : '확대'}
+                </button>
               </div>
 
               {/* 패널 내용 */}
-              {!isCollapsed && (
+              {(
                 <div
                   style={{
                     flex: 1,
@@ -1571,6 +1687,7 @@ export default function TranslationWork() {
                       {/* iframe 에디터 */}
                       <iframe
                         ref={myTranslationIframeRef}
+                        srcDoc={savedTranslationHtml}
                         style={{
                           flex: 1,
                           width: '100%',
@@ -1578,6 +1695,43 @@ export default function TranslationWork() {
                           backgroundColor: '#FFFFFF',
                         }}
                         title="내 번역 에디터"
+                        onLoad={() => {
+                          const iframe = myTranslationIframeRef.current;
+                          if (iframe && !hasRenderedMyTranslation.current) {
+                            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                            if (iframeDoc && iframeDoc.body) {
+                              try {
+                                // body를 편집 가능하게 설정
+                                iframeDoc.body.contentEditable = 'true';
+                                iframeDoc.body.style.padding = '16px';
+                                iframeDoc.body.style.wordWrap = 'break-word';
+                                
+                                // 편집 시 자동 저장 (debounce)
+                                // 참고: setSavedTranslationHtml을 호출하면 srcDoc이 업데이트되어 iframe이 재렌더링되므로
+                                // currentEditorHtmlRef에만 저장하고, 실제 저장은 "저장하기" 버튼으로 수행
+                                let saveTimeout: NodeJS.Timeout;
+                                const handleInput = () => {
+                                  clearTimeout(saveTimeout);
+                                  saveTimeout = setTimeout(() => {
+                                    if (iframeDoc.documentElement) {
+                                      const updatedHtml = iframeDoc.documentElement.outerHTML;
+                                      currentEditorHtmlRef.current = updatedHtml;
+                                      console.log('📝 편집 내용 임시 저장됨 (메모리)');
+                                    }
+                                  }, 500);
+                                };
+                                
+                                iframeDoc.body.addEventListener('input', handleInput);
+                                
+                                hasRenderedMyTranslation.current = true;
+                                setIsTranslationEditorInitialized(true);
+                                console.log('✅ 내 번역 iframe 편집 가능 설정 완료');
+                              } catch (error) {
+                                console.error('내 번역 iframe 설정 실패:', error);
+                              }
+                            }
+                          }
+                        }}
                       />
                     </>
                   ) : (
@@ -1585,30 +1739,14 @@ export default function TranslationWork() {
                     panel.html ? (
                       <iframe
                         ref={panel.ref as React.RefObject<HTMLIFrameElement>}
+                        srcDoc={panel.html}
                         style={{
                           width: '100%',
                           height: '100%',
                           border: 'none',
                           backgroundColor: '#FFFFFF',
                         }}
-                        onLoad={() => {
-                          const iframe = panel.ref.current as HTMLIFrameElement;
-                          if (iframe) {
-                            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-                            if (iframeDoc) {
-                              // 스크롤 이벤트 리스너 추가
-                              const iframeBody = iframeDoc.body || iframeDoc.documentElement;
-                              iframeBody.addEventListener('scroll', () => {
-                                const otherIframes = [
-                                  panel.id === 'original' ? null : originalIframeRef.current,
-                                  panel.id === 'aiDraft' ? null : aiDraftIframeRef.current,
-                                  panel.id === 'myTranslation' ? null : myTranslationIframeRef.current,
-                                ].filter(Boolean) as HTMLIFrameElement[];
-                                syncScroll(iframe, otherIframes);
-                              });
-                            }
-                          }
-                        }}
+                        title={panel.title}
                       />
                     ) : (
                       <div style={{ 

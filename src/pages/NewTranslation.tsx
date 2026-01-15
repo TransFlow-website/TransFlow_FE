@@ -1034,41 +1034,168 @@ const Step3PreEdit: React.FC<{
 };
 
 // STEP 6: 문서 생성
-const Step6CreateDocument: React.FC<{
-  draft: TranslationDraft;
-  onCreateDocument: (data: { title: string; categoryId?: number; estimatedLength?: number }) => void;
-  isCreating: boolean;
-}> = ({ draft, onCreateDocument, isCreating }) => {
+const Step6CreateDocument = React.forwardRef<
+  { handleDraftSave: () => void; handlePublish: () => void },
+  {
+    draft: TranslationDraft;
+    onCreateDocument: (data: { title: string; categoryId?: number; estimatedLength?: number; status: string }) => void;
+    isCreating: boolean;
+  }
+>(({ draft, onCreateDocument, isCreating }, ref) => {
   const [title, setTitle] = useState('');
   const [categoryId, setCategoryId] = useState<string>('');
   const [estimatedLength, setEstimatedLength] = useState<number>(0);
+  const [titleError, setTitleError] = useState<string>('');
+  const [categories, setCategories] = useState<Array<{ id: number; name: string }>>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
 
-  // 예상 분량 자동 계산
+  // 문서 제목 자동 파싱 및 번역
+  useEffect(() => {
+    if (draft.originalHtml && !title && draft.targetLang) {
+      const parseAndTranslateTitle = async () => {
+        try {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(draft.originalHtml, 'text/html');
+          
+          // title 태그 또는 h1 태그에서 제목 추출
+          const titleTag = doc.querySelector('title');
+          const h1Tag = doc.querySelector('h1');
+          
+          let extractedTitle = '';
+          if (titleTag && titleTag.textContent) {
+            extractedTitle = titleTag.textContent.trim();
+          } else if (h1Tag && h1Tag.textContent) {
+            extractedTitle = h1Tag.textContent.trim();
+          } else if (draft.url) {
+            // URL에서 제목 추출 (마지막 fallback)
+            const urlParts = draft.url.split('/').filter(Boolean);
+            extractedTitle = urlParts[urlParts.length - 1] || '번역 문서';
+          }
+          
+          // 제목이 없으면 기본값
+          if (!extractedTitle) {
+            setTitle('번역 문서');
+            return;
+          }
+          
+          // 너무 긴 제목은 잘라내기 (번역 전)
+          if (extractedTitle.length > 100) {
+            extractedTitle = extractedTitle.substring(0, 100) + '...';
+          }
+          
+          // 목표 번역 언어로 번역
+          if (draft.targetLang && draft.targetLang !== 'ko' && extractedTitle) {
+            try {
+              // 제목을 간단한 HTML로 감싸서 번역 API 사용
+              const htmlToTranslate = `<p>${extractedTitle}</p>`;
+              const translatedResponse = await translationApi.translateHtml({
+                html: htmlToTranslate,
+                targetLang: draft.targetLang,
+                sourceLang: draft.sourceLang || 'auto',
+              });
+              
+              if (translatedResponse.translatedHtml) {
+                const translatedDoc = parser.parseFromString(translatedResponse.translatedHtml, 'text/html');
+                const translatedText = translatedDoc.querySelector('p')?.textContent?.trim() || extractedTitle;
+                setTitle(translatedText);
+                console.log('✅ 자동 추출 및 번역된 제목:', translatedText, '(원문:', extractedTitle, ')');
+              } else {
+                setTitle(extractedTitle);
+                console.log('✅ 자동 추출된 제목 (번역 실패):', extractedTitle);
+              }
+            } catch (translateError) {
+              console.warn('제목 번역 실패:', translateError);
+              setTitle(extractedTitle);
+              console.log('✅ 자동 추출된 제목 (번역 오류):', extractedTitle);
+            }
+          } else {
+            // 번역할 필요 없으면 그대로 사용
+            setTitle(extractedTitle);
+            console.log('✅ 자동 추출된 제목:', extractedTitle);
+          }
+        } catch (error) {
+          console.warn('제목 파싱 실패:', error);
+          setTitle('번역 문서');
+        }
+      };
+      
+      parseAndTranslateTitle();
+    }
+  }, [draft.originalHtml, draft.url, draft.targetLang, draft.sourceLang]);
+
+  // 예상 분량 자동 계산 (Version 1의 body 글자 수)
   useEffect(() => {
     if (draft.translatedHtml) {
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = draft.translatedHtml;
-      const textContent = tempDiv.textContent || tempDiv.innerText || '';
-      const length = textContent.replace(/\s+/g, '').length;
-      setEstimatedLength(length);
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(draft.translatedHtml, 'text/html');
+        const body = doc.body;
+        
+        // body의 텍스트만 추출 (공백 제거)
+        const textContent = body.textContent || body.innerText || '';
+        const length = textContent.replace(/\s+/g, '').length;
+        setEstimatedLength(length);
+        console.log('✅ 예상 분량 계산 완료:', length, '자');
+      } catch (error) {
+        console.warn('분량 계산 실패:', error);
+        setEstimatedLength(0);
+      }
     }
   }, [draft.translatedHtml]);
 
-  const handleSubmit = () => {
-    if (!title.trim()) {
-      alert('문서 제목을 입력해주세요.');
-      return;
-    }
+  // 카테고리 목록 로드
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        setCategoriesLoading(true);
+        const { categoryApi } = await import('../services/categoryApi');
+        const categoryList = await categoryApi.getAllCategories();
+        setCategories(categoryList.map(cat => ({ id: cat.id, name: cat.name })));
+        console.log('✅ 카테고리 목록 로드 완료:', categoryList.length, '개');
+      } catch (error) {
+        console.error('카테고리 목록 로드 실패:', error);
+        setCategories([]);
+      } finally {
+        setCategoriesLoading(false);
+      }
+    };
+    
+    loadCategories();
+  }, []);
 
-    onCreateDocument({
-      title: title.trim(),
-      categoryId: categoryId ? parseInt(categoryId) : undefined,
-      estimatedLength: estimatedLength > 0 ? estimatedLength : undefined,
-    });
-  };
+  // 외부에서 호출 가능한 함수들 (하단 버튼용)
+  React.useImperativeHandle(ref, () => ({
+    handleDraftSave: () => {
+      if (!title.trim()) {
+        setTitleError('문서 제목을 입력해주세요.');
+        return;
+      }
+      setTitleError('');
+      onCreateDocument({
+        title: title.trim(),
+        categoryId: categoryId ? parseInt(categoryId) : undefined,
+        estimatedLength: estimatedLength > 0 ? estimatedLength : undefined,
+        status: 'DRAFT',
+      });
+    },
+    handlePublish: () => {
+      if (!title.trim()) {
+        setTitleError('문서 제목을 입력해주세요.');
+        return;
+      }
+      setTitleError('');
+      onCreateDocument({
+        title: title.trim(),
+        categoryId: categoryId ? parseInt(categoryId) : undefined,
+        estimatedLength: estimatedLength > 0 ? estimatedLength : undefined,
+        status: 'PENDING_TRANSLATION',
+      });
+    },
+  }));
 
   return (
     <div
+      data-step6
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -1129,6 +1256,11 @@ const Step6CreateDocument: React.FC<{
             }}
             disabled={isCreating}
           />
+          {titleError && (
+            <span style={{ fontSize: '12px', color: '#FF0000', marginTop: '4px', display: 'block' }}>
+              {titleError}
+            </span>
+          )}
         </div>
 
         {/* 원본 URL */}
@@ -1251,13 +1383,14 @@ const Step6CreateDocument: React.FC<{
               fontFamily: 'system-ui, Pretendard, sans-serif',
               cursor: 'pointer',
             }}
-            disabled={isCreating}
+            disabled={isCreating || categoriesLoading}
           >
             <option value="">카테고리 선택 안 함</option>
-            <option value="1">기술 문서</option>
-            <option value="2">뉴스</option>
-            <option value="3">블로그</option>
-            <option value="4">기타</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id.toString()}>
+                {category.name}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -1291,19 +1424,58 @@ const Step6CreateDocument: React.FC<{
             disabled={isCreating}
           />
           <span style={{ fontSize: '12px', color: '#696969', marginTop: '4px', display: 'block' }}>
-            총 {estimatedLength.toLocaleString()}자 (공백 제외)
+            총 글자 수: {estimatedLength.toLocaleString()}자 (공백 제외)
           </span>
         </div>
 
-        {/* 버튼 */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        {/* 버튼 영역 - 카드 하단 */}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'flex-end', 
+          gap: '12px',
+          marginTop: '32px',
+          paddingTop: '24px',
+          borderTop: '1px solid #E0E0E0',
+        }}>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              if (!title.trim()) {
+                setTitleError('문서 제목을 입력해주세요.');
+                return;
+              }
+              setTitleError('');
+              onCreateDocument({
+                title: title.trim(),
+                categoryId: categoryId ? parseInt(categoryId) : undefined,
+                estimatedLength: estimatedLength > 0 ? estimatedLength : undefined,
+                status: 'DRAFT',
+              });
+            }}
+            disabled={isCreating || !title.trim()}
+            style={{ padding: '10px 20px' }}
+          >
+            {isCreating ? '저장 중...' : '임시 저장 (Draft)'}
+          </Button>
           <Button
             variant="primary"
-            onClick={handleSubmit}
+            onClick={() => {
+              if (!title.trim()) {
+                setTitleError('문서 제목을 입력해주세요.');
+                return;
+              }
+              setTitleError('');
+              onCreateDocument({
+                title: title.trim(),
+                categoryId: categoryId ? parseInt(categoryId) : undefined,
+                estimatedLength: estimatedLength > 0 ? estimatedLength : undefined,
+                status: 'PENDING_TRANSLATION',
+              });
+            }}
             disabled={isCreating || !title.trim()}
-            style={{ padding: '12px 24px' }}
+            style={{ padding: '10px 20px' }}
           >
-            {isCreating ? '생성 중...' : '문서 생성'}
+            {isCreating ? '생성 중...' : '문서 생성 및 공개'}
           </Button>
         </div>
 
@@ -1319,13 +1491,13 @@ const Step6CreateDocument: React.FC<{
               textAlign: 'center',
             }}
           >
-            문서를 생성하고 있습니다. 잠시만 기다려주세요...
+            문서를 생성하고 있습니다...
           </div>
         )}
       </div>
     </div>
   );
-};
+});
 
 // STEP 4: 번역 실행
 const Step4Translation: React.FC<{
@@ -1904,9 +2076,9 @@ const Step5ParallelEdit: React.FC<{
 
   // 패널 정의
   const panels = [
-    { id: 'crawled', title: '크롤링 원본', ref: crawledIframeRef, editable: false },
-    { id: 'selected', title: '선택한 영역', ref: selectedIframeRef, editable: false },
-    { id: 'translated', title: '편집본', ref: translatedIframeRef, editable: true },
+    { id: 'crawled', title: '원본 웹사이트', ref: crawledIframeRef, editable: false },
+    { id: 'selected', title: 'Version 0', ref: selectedIframeRef, editable: false },
+    { id: 'translated', title: 'Version 1 (AI 초벌 번역)', ref: translatedIframeRef, editable: true },
   ];
 
   const visiblePanels = panels.filter(p => !collapsedPanels.has(p.id));
@@ -2136,6 +2308,7 @@ const NewTranslation: React.FC = () => {
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const step6Ref = React.useRef<{ handleDraftSave: () => void; handlePublish: () => void } | null>(null);
 
   const userRole = useMemo(() => {
     if (!user) return null;
@@ -2417,16 +2590,8 @@ const NewTranslation: React.FC = () => {
     }
   };
 
-  const handleCreateDocument = async (data: { title: string; categoryId?: number; estimatedLength?: number }) => {
-    // 번역 대기 상태로 올릴지 확인
-    const confirmPending = window.confirm(
-      '문서를 생성합니다.\n\n번역 대기 상태로 올리시겠습니까?\n\n' +
-      '- 예: 봉사자들이 이 문서를 볼 수 있습니다.\n' +
-      '- 아니오: 초안(DRAFT) 상태로 저장됩니다.'
-    );
-    
-    const status = confirmPending ? 'PENDING_TRANSLATION' : 'DRAFT';
-    console.log('📝 문서 생성 시작:', data, '상태:', status);
+  const handleCreateDocument = async (data: { title: string; categoryId?: number; estimatedLength?: number; status: string }) => {
+    console.log('📝 문서 생성 시작:', data, '상태:', data.status);
     
     setIsCreating(true);
     setSaveError(null);
@@ -2440,7 +2605,7 @@ const NewTranslation: React.FC = () => {
         targetLang: draft.targetLang || 'ko',
         categoryId: data.categoryId,
         estimatedLength: data.estimatedLength,
-        status: status,
+        status: data.status,
       });
       setDocumentId(response.id);
       console.log('✅ 문서 생성 완료:', response.id);
@@ -2464,13 +2629,12 @@ const NewTranslation: React.FC = () => {
       }
 
       // 4. 완료 후 문서 관리 페이지로 이동
-      const statusText = confirmPending ? '번역 대기 상태로' : '초안 상태로';
-      alert(`문서가 ${statusText} 생성되었습니다!`);
+      const statusText = data.status === 'PENDING_TRANSLATION' ? '번역 대기 상태로' : '초안 상태로';
+      setSaveError(null);
       navigate('/documents');
     } catch (error: any) {
       console.error('❌ 문서 생성 실패:', error);
       setSaveError(error?.response?.data?.message || '문서 생성 실패');
-      alert('문서 생성에 실패했습니다: ' + (error?.response?.data?.message || error.message));
     } finally {
       setIsCreating(false);
     }
@@ -2594,8 +2758,12 @@ const NewTranslation: React.FC = () => {
       case 6:
         return (
           <Step6CreateDocument
+            ref={step6Ref}
             draft={draft}
-            onCreateDocument={handleCreateDocument}
+            onCreateDocument={(data) => {
+              // Step6CreateDocument에서 status를 포함하여 전달
+              handleCreateDocument(data);
+            }}
             isCreating={isCreating}
           />
         );
@@ -2634,6 +2802,21 @@ const NewTranslation: React.FC = () => {
               }}
             >
               STEP {currentStep} / 6
+            </div>
+            <div
+              style={{
+                fontSize: '12px',
+                color: '#696969',
+                fontFamily: 'system-ui, Pretendard, sans-serif',
+                fontWeight: 500,
+              }}
+            >
+              {currentStep === 1 && '가져올 웹사이트 주소 입력'}
+              {currentStep === 2 && '영역 선택'}
+              {currentStep === 3 && '번역 전 편집'}
+              {currentStep === 4 && '번역 실행'}
+              {currentStep === 5 && '번역 후 편집'}
+              {currentStep === 6 && '문서 정보 입력 및 생성'}
             </div>
             <div
               style={{
@@ -2695,7 +2878,7 @@ const NewTranslation: React.FC = () => {
             </Button>
           )}
         </div>
-        <div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {currentStep < 6 && (
             <Button variant="primary" onClick={handleNext}>
               다음

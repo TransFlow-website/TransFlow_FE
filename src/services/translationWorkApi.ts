@@ -9,6 +9,7 @@ export interface LockStatusResponse {
   };
   lockedAt?: string;
   canEdit: boolean;
+  completedParagraphs?: number[];
 }
 
 export interface HandoverRequest {
